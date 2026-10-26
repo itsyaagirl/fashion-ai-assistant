@@ -18,7 +18,8 @@ def get_llm(model: str | None = None, temperature: float | None = None):
     return ChatGoogleGenerativeAI(
         model=model or settings.llm_model,
         temperature=settings.llm_temperature if temperature is None else temperature,
-        max_retries=6,          # the free tier rate-limits; retries back off automatically
+        max_retries=int(os.environ.get("FA_LLM_RETRIES", "2")),   # a couple of retries for blips, then a clear error
+        timeout=float(os.environ.get("FA_LLM_TIMEOUT", "60")),    # seconds per call, so a stuck call can't hang forever
     )
 
 
