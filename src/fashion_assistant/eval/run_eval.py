@@ -33,10 +33,20 @@ from .metrics import hit_at_k, mrr, ndcg_at_k
 
 # ----------------------------------------------------------------------------- our system, no LLM
 def garment_query_vectors(eval_set: pd.DataFrame, image_paths: list[str]) -> np.ndarray:
-    img = emb.encode_images(image_paths)
+    """Photo + text when the garment photo is on disk; text only (CLIP text side) otherwise.
+    Either way the query lives in the same CLIP space as the catalog."""
+    from pathlib import Path
+
     txt = emb.encode_texts([f"an accessory to wear with a {c} {t}" for c, t in
                             zip(eval_set["garment_colour"], eval_set["garment_type"])])
-    return emb.normalize(0.7 * img + 0.3 * txt)
+    desc = emb.encode_texts([str(t) for t in eval_set["garment_text"]])
+    q = 0.5 * txt + 0.5 * desc
+    has = [i for i, p in enumerate(image_paths) if Path(p).exists()]
+    if has:
+        img = emb.encode_images([image_paths[i] for i in has])
+        q[has] = 0.7 * img + 0.3 * txt[has]
+    print(f"[eval] query vectors: {len(has)} from photos, {len(image_paths) - len(has)} from text")
+    return emb.normalize(q)
 
 
 def clip_retrieval(index: CatalogIndex, qvec: np.ndarray, k: int = 50) -> pd.DataFrame:
@@ -111,7 +121,12 @@ def run_judge_eval(assistant, eval_set: pd.DataFrame, n: int = 20, seed: int = 0
     bm25 = KeywordSearch(cat)
     rng = random.Random(seed)
     outcomes = []
-    sample = eval_set.sample(min(n, len(eval_set)), random_state=seed)
+    with_photo = eval_set[[local_image_path(g).exists() for g in eval_set["garment_id"]]]
+    if with_photo.empty:
+        print("[judge] skipped: no garment photos downloaded yet (Kaggle rate limit). "
+              "Run rebuild_eval_set() later, or judge with your own photos.")
+        return {"n": 0, "win": 0, "tie": 0, "loss": 0, "win_rate": 0.0, "win_or_tie_rate": 0.0}
+    sample = with_photo.sample(min(n, len(with_photo)), random_state=seed)
     for _, row in sample.iterrows():
         img = str(local_image_path(row["garment_id"]))
         try:
@@ -178,7 +193,7 @@ def save_results(table: pd.DataFrame, judge: dict | None = None, n_queries: int 
           f"Evaluation queries: **{n_queries or '?'}** real H&M baskets (garment + accessory bought together).", "",
           "## Offline comparison (all queries, no LLM)", "", _md_table(table), "",
           "![offline metrics](images/offline_metrics.png)", ""]
-    if judge:
+    if judge and judge.get("n"):
         md += ["## Blind side-by-side: full agent vs keyword search", "",
                f"Judge: `{settings.judge_model}`, {judge['n']} outfits, order randomised per outfit.", "",
                "| Agent wins | Ties | Keyword wins | Win rate | Win-or-tie rate |",

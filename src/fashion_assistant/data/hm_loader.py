@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import random
 import shutil
+import threading
 import time
 import zipfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -175,16 +176,26 @@ def build_catalog(articles: pd.DataFrame, pop: pd.DataFrame, size: int | None = 
 
 # ----------------------------------------------------------------------------- 4. images
 _last_errors: list[str] = []
+_rate = {"consecutive_429": 0, "stopped": False}
+_rate_lock = threading.Lock()
+RATE_LIMIT_STOP_AFTER = 12   # this many 429s in a row = Kaggle has blocked us for now; stop asking
 
 
-def _download_one(api, article_id: int, attempts: int = 4) -> bool:
-    """Download one product photo. Retries with back-off, because after a few thousand
-    requests Kaggle starts refusing some (rate limiting) and those must not be lost."""
+def _is_rate_limit(msg: str) -> bool:
+    return "429" in msg or "Too Many Requests" in msg
+
+
+def _download_one(api, article_id: int, attempts: int = 3) -> bool:
+    """Download one product photo. Retries briefly on hiccups; if Kaggle starts refusing
+    requests (HTTP 429) repeatedly, the whole batch stops instead of hammering the API,
+    which only makes the block last longer."""
     out = local_image_path(article_id)
     if out.exists():
         return True
     tmp_dir = settings.raw_dir / "_img_tmp" / f"{int(article_id):010d}"
     for attempt in range(attempts):
+        if _rate["stopped"]:
+            return False
         tmp_dir.mkdir(parents=True, exist_ok=True)
         try:
             api.competition_download_file(settings.kaggle_competition, article_image_relpath(article_id),
@@ -194,6 +205,8 @@ def _download_one(api, article_id: int, attempts: int = 4) -> bool:
                     with zipfile.ZipFile(f) as zf:
                         zf.extractall(tmp_dir)
             jpgs = list(tmp_dir.rglob("*.jpg"))
+            with _rate_lock:
+                _rate["consecutive_429"] = 0
             if jpgs:
                 shutil.move(str(jpgs[0]), out)
                 return True
@@ -204,47 +217,55 @@ def _download_one(api, article_id: int, attempts: int = 4) -> bool:
                 return False                  # this article genuinely has no photo
             if len(_last_errors) < 5:
                 _last_errors.append(f"{err.__class__.__name__}: {msg[:150]}")
-            time.sleep(2 ** attempt + random.random())   # 1s, 2s, 4s, 8s back-off
+            if _is_rate_limit(msg):
+                with _rate_lock:
+                    _rate["consecutive_429"] += 1
+                    if _rate["consecutive_429"] >= RATE_LIMIT_STOP_AFTER:
+                        _rate["stopped"] = True
+            time.sleep(2 ** attempt + random.random())
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
     return False
 
 
 def download_images(article_ids, workers: int = 4) -> set[int]:
-    """Fetch individual product photos in parallel. Returns the ids that succeeded."""
+    """Fetch individual product photos in parallel. Returns the ids that are on disk afterwards."""
     settings.ensure_dirs()
-    api = _kaggle_api()
     ids = [int(a) for a in article_ids]
+    ok = {a for a in ids if local_image_path(a).exists()}
+    todo = [a for a in ids if a not in ok]
     _last_errors.clear()
-    ok: set[int] = set()
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = {pool.submit(_download_one, api, a): a for a in ids}
-        for n, fut in enumerate(as_completed(futures), 1):
-            if fut.result():
-                ok.add(futures[fut])
-            if n % 250 == 0:
-                print(f"  images: {n}/{len(ids)} ({len(ok)} ok)")
-    print(f"[images] {len(ok)}/{len(ids)} downloaded")
-    if _last_errors:
-        print("[images] some downloads failed even after retries, e.g.:\n   " + "\n   ".join(_last_errors[:3]))
+    _rate.update(consecutive_429=0, stopped=False)
+    if todo:
+        api = _kaggle_api()
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {pool.submit(_download_one, api, a): a for a in todo}
+            for n, fut in enumerate(as_completed(futures), 1):
+                if fut.result():
+                    ok.add(futures[fut])
+                if n % 250 == 0:
+                    print(f"  images: {n}/{len(todo)} new ({len(ok)} on disk)")
+    print(f"[images] {len(ok)}/{len(ids)} photos available")
+    if _rate["stopped"]:
+        print("[images] Kaggle is rate-limiting this account (HTTP 429), so downloading stopped early. "
+              "Everything still works; photos already saved are kept. Try again in an hour for more.")
+    elif _last_errors:
+        print("[images] some downloads failed, e.g.:\n   " + "\n   ".join(_last_errors[:3]))
     return ok
 
 
 # ----------------------------------------------------------------------------- one-call pipeline
-def _finish_eval_set(eval_set: pd.DataFrame, eval_queries: int, with_images: bool) -> pd.DataFrame:
+def _finish_eval_set(eval_set: pd.DataFrame, eval_queries: int, with_images: bool,
+                     photos_wanted: int = 40) -> pd.DataFrame:
+    """Keep every outfit (the offline eval can use the garment's text when there is no photo)
+    and fetch photos for a small number of them (the blind LLM judge needs real photos)."""
     print(f"[eval] {len(eval_set)} candidate outfits found in real baskets")
-    if with_images and len(eval_set):
-        ok = download_images(eval_set["garment_id"].unique())
-        eval_set = eval_set[eval_set["garment_id"].isin(ok)]
-        print(f"[eval] {len(eval_set)} of them have a garment photo")
     eval_set = eval_set.head(eval_queries).reset_index(drop=True)
+    if with_images and len(eval_set):
+        download_images(eval_set["garment_id"].head(photos_wanted))
+    eval_set["has_photo"] = eval_set["garment_id"].map(lambda g: local_image_path(g).exists()) if len(eval_set) else []
     eval_set.to_parquet(settings.processed_dir / "eval_set.parquet")
-    if eval_set.empty:
-        print("[eval] WARNING: the evaluation set is empty. Most likely Kaggle refused the photo downloads "
-              "(rate limit). Wait a few minutes, then run: from fashion_assistant.data.hm_loader import "
-              "rebuild_eval_set; rebuild_eval_set()")
-    else:
-        print(f"[eval] {len(eval_set)} outfit queries saved")
+    print(f"[eval] {len(eval_set)} outfit queries saved, {int(eval_set['has_photo'].sum()) if len(eval_set) else 0} with a garment photo")
     return eval_set
 
 
