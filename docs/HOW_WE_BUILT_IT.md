@@ -183,7 +183,7 @@ The front end is plain HTML/CSS/JS hosted on **Vercel**. Vercel can't run the mo
 
 | I want to… | Change |
 |---|---|
-| use another Gemini model | `GEMINI_MODEL` env var (default `gemini-3.8-flash`; Google is retiring the 2.5 family) |
+| use another Gemini model | `GEMINI_MODEL` env var (default `gemini-3.5-flash-lite`: fast and on free keys; `gemini-3.8-flash` timed out on the free tier and 2.5 is retired) |
 | a bigger catalog | `FA_CATALOG_SIZE` (e.g. 10000) |
 | include shoes | add `"Shoes"` to `accessory_groups` in `config.py` |
 | change ranking weights | `ranking/personas.py` |

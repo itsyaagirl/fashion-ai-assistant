@@ -59,8 +59,9 @@ class Settings:
     eval_window_weeks: int = 8         # baskets used to build the evaluation set
 
     # ---------- models ----------
-    # Google recommends Gemini 3.x for new projects (2.5 models are being retired).
-    llm_model: str = _env("GEMINI_MODEL", "gemini-3.8-flash")
+    # gemini-3.5-flash-lite: fast and available on free keys (3.8-flash timed out on the free tier,
+    # 2.5 models are retired for new users). Change with the GEMINI_MODEL environment variable.
+    llm_model: str = _env("GEMINI_MODEL", "gemini-3.5-flash-lite")
     judge_model: str = _env("GEMINI_JUDGE_MODEL", "gemini-3.5-flash-lite")
     llm_temperature: float = 0.4
     clip_model: str = _env("FA_CLIP_MODEL", "clip-ViT-B-32")             # image + text, same space
