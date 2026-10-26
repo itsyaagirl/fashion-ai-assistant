@@ -126,12 +126,19 @@ Metrics:
 
 **Being honest about the metrics.** Co-purchases are noisy (people buy unrelated items together), so all Hit@k numbers are low, including the baselines. Popularity can do surprisingly well on Hit@k because best sellers appear in many baskets; that's why we also measure trend, colour and variety, plus the blind judge. Report whatever the notebook produces, including where a baseline wins.
 
-### Step 7: Tests (`tests/`)
+### Step 7: The web app (`frontend/`, `api.py`, `launch.py`)
 
-14 tests run in about 2 seconds with **no API key or downloads**:
+The model is wrapped in a FastAPI server with an upload endpoint. A second endpoint **streams** the graph: LangGraph's `graph.stream(..., stream_mode="updates")` emits one update per node as it finishes, and the server forwards each one to the browser as a Server-Sent Event. That's how the page shows real progress ("Planned searches: gold drop earrings…").
+
+The front end is plain HTML/CSS/JS hosted on **Vercel**. Vercel can't run the model itself: CLIP + PyTorch is too big for its serverless functions, and the H&M photos can't be published. So the model server runs in Colab, and a free **Cloudflare quick tunnel** gives it a public HTTPS address. The launch cell prints a Vercel link with `?api=<tunnel>` so the site connects in one click. Details in [WEB_APP.md](WEB_APP.md).
+
+### Step 8: Tests (`tests/`)
+
+19 tests run in about 2 seconds with **no API key or downloads**:
 - a fake CLIP that turns text into repeatable random vectors;
 - a synthetic dataset shaped exactly like H&M's files (to test the popularity maths, catalog and eval set);
 - a **scripted fake Gemini** that returns a fixed analysis, makes three tool calls, then says DONE. It runs the *real* LangGraph graph end to end and checks routing, the ToolNode, candidate pooling, ranking, personas and the not-an-outfit exit.
+- the **web API**: uploads, the streamed events, bad-file errors, the concurrency slot being released, and CORS for the Vercel origin.
 
 ---
 
@@ -165,6 +172,8 @@ Metrics:
 3. The eval queries are product photos, not people wearing outfits → add street-style photos (e.g. DeepFashion2) with human labels.
 4. Trends end in 2020 → plug in a live source (the TikTok loader is the hook).
 5. Colour rules are simple → extract dominant colours from pixels instead of names.
+
+**Why not host the model on Vercel too?** Vercel serverless functions have a ~250 MB size limit and no GPU; CLIP + PyTorch alone exceeds that. In production you'd put the API on a GPU host (Cloud Run, Modal, a small VM) and keep the static front end on Vercel, the same split as here.
 
 **How would it scale?** Approximate FAISS indexes (HNSW / IVF-PQ) for millions of items, a nightly batch for trend scores, caching analyses by image hash, and serving the graph behind an API.
 

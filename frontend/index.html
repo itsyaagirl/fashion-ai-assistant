@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Finishing Touch</title>
+  <meta name="description" content="Upload an outfit photo and get accessory picks ranked by style, trend and colour fit.">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:ital,opsz,wght@0,6..96,400..800;1,6..96,400..700&family=Hanken+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <script src="config.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="wordmark" href="./" aria-label="Finishing Touch home">Finishing <em>Touch</em></a>
+    <button class="server-pill" id="serverPill" type="button" aria-haspopup="dialog" aria-controls="connectDialog">
+      <span class="dot" aria-hidden="true"></span><span id="serverText">Checking model server</span>
+    </button>
+  </header>
+
+  <main class="stage">
+    <!-- Left: the outfit plate -->
+    <section class="plate-col" aria-label="Your outfit">
+      <label class="plate" id="plate" for="fileInput">
+        <input id="fileInput" type="file" accept="image/jpeg,image/png,image/webp" hidden>
+        <img id="outfitImg" alt="Your outfit" hidden>
+        <span class="plate-empty" id="plateEmpty">
+          <svg viewBox="0 0 64 64" aria-hidden="true"><path d="M24 10a8 8 0 1 1 11 7.4c-1.8.8-3 2.4-3 4.4V24l22 14a4 4 0 0 1-2.2 7.3H12.2A4 4 0 0 1 10 38.2L32 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <strong>Add an outfit photo</strong>
+          <span>Drop it here or click to choose. Worn or laid flat, JPG or PNG.</span>
+        </span>
+      </label>
+      <button class="text-btn" id="changePhoto" type="button" hidden>Change photo</button>
+
+      <div class="read" id="outfitRead" hidden>
+        <h2 class="small-head">What the stylist sees</h2>
+        <p class="vibe" id="vibe"></p>
+        <dl class="facts">
+          <div><dt>Wearing</dt><dd id="garments"></dd></div>
+          <div><dt>Colours</dt><dd id="colours"></dd></div>
+          <div><dt>Style</dt><dd id="style"></dd></div>
+          <div><dt>Occasion</dt><dd id="occasion"></dd></div>
+        </dl>
+      </div>
+    </section>
+
+    <!-- Right: controls, progress, results -->
+    <section class="work-col">
+      <form class="ask" id="askForm">
+        <h1>What finishes this look?</h1>
+        <p class="lede">An AI stylist reads your outfit, searches 3,000 best-selling accessories and ranks them by style, trend and colour.</p>
+
+        <label class="field">
+          <span>Where are you wearing it? <small>(optional)</small></span>
+          <input id="requestInput" type="text" maxlength="200" placeholder="Dinner downtown, a summer wedding, the office">
+        </label>
+
+        <fieldset class="personas">
+          <legend>Also ask these influencers</legend>
+          <div class="persona-grid" id="personaGrid"></div>
+        </fieldset>
+
+        <button class="primary" id="goBtn" type="submit" disabled>Style this outfit</button>
+        <p class="form-msg" id="formMsg" role="status" aria-live="polite"></p>
+      </form>
+
+      <section class="progress" id="progress" hidden aria-live="polite">
+        <h2 class="small-head">Styling in progress</h2>
+        <ol id="steps"></ol>
+      </section>
+
+      <section class="results" id="results" hidden>
+        <div class="hero-pick" id="heroPick"></div>
+
+        <h2 class="section-head">Also works</h2>
+        <div class="rail" id="alsoRail"></div>
+
+        <h2 class="section-head">The influencers' picks</h2>
+        <div class="persona-picks" id="personaPicks"></div>
+
+        <h2 class="section-head">Stylist's notes</h2>
+        <article class="notes" id="notes"></article>
+
+        <details class="trace">
+          <summary>How the agent got here</summary>
+          <ol id="traceList"></ol>
+          <p class="trace-meta" id="traceMeta"></p>
+        </details>
+
+        <button class="text-btn" id="againBtn" type="button">Style another outfit</button>
+      </section>
+    </section>
+  </main>
+
+  <section class="trending" id="trending" hidden aria-labelledby="trendingHead">
+    <h2 class="section-head" id="trendingHead">Selling fastest right now</h2>
+    <p class="trending-note">Based on the last four weeks of H&amp;M sales in the dataset, compared with the twelve weeks before.</p>
+    <div class="rail" id="trendRail"></div>
+  </section>
+
+  <footer class="foot">
+    <p>Built with LangGraph, Gemini, CLIP and H&amp;M sales data. <a href="https://github.com/itsyaagirl/fashion-ai-assistant">Source on GitHub</a></p>
+  </footer>
+
+  <dialog class="connect" id="connectDialog" aria-labelledby="connectTitle">
+    <form method="dialog" id="connectForm">
+      <h2 id="connectTitle">Connect to your model server</h2>
+      <p>The stylist runs in Google Colab. Run the <b>Launch the web app</b> cell in the notebook and open the link it prints, or paste the server address it shows here.</p>
+      <label class="field">
+        <span>Server address</span>
+        <input id="apiInput" type="url" placeholder="https://something.trycloudflare.com" autocomplete="off">
+      </label>
+      <p class="form-msg" id="connectMsg" role="status" aria-live="polite"></p>
+      <div class="dialog-actions">
+        <button class="text-btn" value="cancel" type="submit">Close</button>
+        <button class="primary" id="connectBtn" type="button">Connect</button>
+      </div>
+    </form>
+  </dialog>
+
+  <template id="tagTpl">
+    <div class="tag" aria-hidden="true"><span class="tag-hole"></span><span class="tag-score"></span><span class="tag-label">match</span></div>
+  </template>
+
+  <script src="app.js"></script>
+</body>
+</html>

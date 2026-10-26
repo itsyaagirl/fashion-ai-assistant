@@ -162,6 +162,10 @@ persona_fit = 0.5 + 0.2·(liked words, max 2) − 0.35·(avoided words, max 2), 
 | Missing H&M photo | product dropped during catalog build |
 | Model renamed/retired | single setting `GEMINI_MODEL` |
 
-## 8. Scaling notes
+## 8. Web app
+
+A static front end on **Vercel** talks to a **FastAPI** server (`api.py`) running next to the model in Colab, reached through a Cloudflare quick tunnel. `POST /api/recommend/stream` forwards `graph.stream(stream_mode="updates")` as Server-Sent Events, so the UI shows each node as it completes. Full diagram, endpoints and design notes: [WEB_APP.md](WEB_APP.md).
+
+## 9. Scaling notes
 
 For 100k+ products, swap `IndexFlatIP` for `IndexHNSWFlat` or IVF-PQ, precompute trend scores in a daily batch job, cache outfit analyses by image hash, and serve the graph behind an API (LangGraph Platform or FastAPI). The graph and tools need no change; only the index class does.
