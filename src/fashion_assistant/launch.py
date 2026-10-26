@@ -26,15 +26,27 @@ from pathlib import Path
 
 CLOUDFLARED_URL = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64"
 _server_thread = None
+_server = None
 _tunnel_proc = None
+_tunnel_url = None
+
+
+def _stop_server() -> None:
+    """Stop a server started earlier in this session (e.g. to restart it with a rebuilt assistant)."""
+    global _server, _server_thread
+    if _server is not None and _server_thread is not None and _server_thread.is_alive():
+        _server.should_exit = True
+        _server_thread.join(timeout=10)
+    _server, _server_thread = None, None
 
 
 def _start_server(app, port: int) -> None:
-    global _server_thread
+    global _server_thread, _server
     import uvicorn
 
-    server = uvicorn.Server(uvicorn.Config(app, host="0.0.0.0", port=port, log_level="warning"))
-    _server_thread = threading.Thread(target=server.run, daemon=True)
+    _stop_server()
+    _server = uvicorn.Server(uvicorn.Config(app, host="0.0.0.0", port=port, log_level="warning"))
+    _server_thread = threading.Thread(target=_server.run, daemon=True)
     _server_thread.start()
     for _ in range(60):                      # wait until it answers
         try:
@@ -54,9 +66,27 @@ def _cloudflared() -> str:
     return str(path)
 
 
+def wait_until_public(url: str, timeout_s: int = 120) -> bool:
+    """New trycloudflare.com addresses take a little while to start answering. Poll until
+    /api/health works through the tunnel, so the printed link works the moment you click it."""
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        try:
+            with urllib.request.urlopen(f"{url}/api/health", timeout=10) as r:
+                if r.status == 200:
+                    return True
+        except Exception:  # noqa: BLE001 - not ready yet
+            pass
+        time.sleep(3)
+    return False
+
+
 def start_tunnel(port: int, timeout_s: int = 60) -> str:
-    """Open a Cloudflare quick tunnel to localhost:port and return its https URL."""
-    global _tunnel_proc
+    """Open a Cloudflare quick tunnel to localhost:port and return its https URL.
+    Re-uses the running tunnel if there is one."""
+    global _tunnel_proc, _tunnel_url
+    if _tunnel_proc is not None and _tunnel_proc.poll() is None and _tunnel_url:
+        return _tunnel_url
     _tunnel_proc = subprocess.Popen(
         [_cloudflared(), "tunnel", "--url", f"http://localhost:{port}", "--no-autoupdate"],
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
@@ -66,7 +96,8 @@ def start_tunnel(port: int, timeout_s: int = 60) -> str:
         m = re.search(r"https://[a-z0-9-]+\.trycloudflare\.com", line)
         if m:
             threading.Thread(target=lambda: [None for _ in _tunnel_proc.stdout], daemon=True).start()  # keep draining
-            return m.group(0)
+            _tunnel_url = m.group(0)
+            return _tunnel_url
         if time.time() > deadline:
             break
     raise RuntimeError("Could not open a Cloudflare tunnel. Re-run the cell, or use the Colab-only link below.")
@@ -77,14 +108,18 @@ def launch(assistant=None, port: int = 8000, share: bool = True, frontend_url: s
 
     from .api import create_app
 
-    if _server_thread is None or not _server_thread.is_alive():
-        _start_server(create_app(assistant), port)
+    # Always (re)start, so re-running the cell picks up a rebuilt assistant (e.g. a new model).
+    _start_server(create_app(assistant), port)
     print(f"✓ model server running on port {port}")
     if not share:
         _colab_local_link(port)
         return None
     url = start_tunnel(port)
-    print(f"✓ public API: {url}\n")
+    print(f"✓ public API: {url}  (waiting until it answers ...)")
+    if wait_until_public(url):
+        print("✓ reachable from the internet\n")
+    else:
+        print("! the tunnel is slow to come up; if the app says 'offline', wait a minute and click Connect again\n")
     if frontend_url:
         print(f"Open the app (Vercel):  {frontend_url.rstrip('/')}/?api={quote(url, safe='')}")
     print(f"Or open it directly:     {url}")
