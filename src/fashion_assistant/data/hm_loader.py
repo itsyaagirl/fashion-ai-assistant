@@ -12,7 +12,9 @@ competition rules. You must accept the rules once on kaggle.com before downloadi
 """
 from __future__ import annotations
 
+import random
 import shutil
+import time
 import zipfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -172,34 +174,48 @@ def build_catalog(articles: pd.DataFrame, pop: pd.DataFrame, size: int | None = 
 
 
 # ----------------------------------------------------------------------------- 4. images
-def _download_one(api, article_id: int) -> bool:
+_last_errors: list[str] = []
+
+
+def _download_one(api, article_id: int, attempts: int = 4) -> bool:
+    """Download one product photo. Retries with back-off, because after a few thousand
+    requests Kaggle starts refusing some (rate limiting) and those must not be lost."""
     out = local_image_path(article_id)
     if out.exists():
         return True
     tmp_dir = settings.raw_dir / "_img_tmp" / f"{int(article_id):010d}"
-    tmp_dir.mkdir(parents=True, exist_ok=True)
-    try:
-        api.competition_download_file(settings.kaggle_competition, article_image_relpath(article_id),
-                                      path=str(tmp_dir), quiet=True)
-        for f in tmp_dir.iterdir():
-            if f.suffix == ".zip":
-                with zipfile.ZipFile(f) as zf:
-                    zf.extractall(tmp_dir)
-        jpgs = list(tmp_dir.rglob("*.jpg"))
-        if jpgs:
-            shutil.move(str(jpgs[0]), out)
-        return out.exists()
-    except Exception:
-        return False  # some H&M articles have no photo
-    finally:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
+    for attempt in range(attempts):
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            api.competition_download_file(settings.kaggle_competition, article_image_relpath(article_id),
+                                          path=str(tmp_dir), quiet=True)
+            for f in tmp_dir.iterdir():
+                if f.suffix == ".zip":
+                    with zipfile.ZipFile(f) as zf:
+                        zf.extractall(tmp_dir)
+            jpgs = list(tmp_dir.rglob("*.jpg"))
+            if jpgs:
+                shutil.move(str(jpgs[0]), out)
+                return True
+            return False                      # downloaded fine, but no photo inside
+        except Exception as err:  # noqa: BLE001
+            msg = str(err)
+            if "404" in msg or "Not Found" in msg:
+                return False                  # this article genuinely has no photo
+            if len(_last_errors) < 5:
+                _last_errors.append(f"{err.__class__.__name__}: {msg[:150]}")
+            time.sleep(2 ** attempt + random.random())   # 1s, 2s, 4s, 8s back-off
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+    return False
 
 
-def download_images(article_ids, workers: int = 8) -> set[int]:
+def download_images(article_ids, workers: int = 4) -> set[int]:
     """Fetch individual product photos in parallel. Returns the ids that succeeded."""
     settings.ensure_dirs()
     api = _kaggle_api()
     ids = [int(a) for a in article_ids]
+    _last_errors.clear()
     ok: set[int] = set()
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = {pool.submit(_download_one, api, a): a for a in ids}
@@ -209,10 +225,29 @@ def download_images(article_ids, workers: int = 8) -> set[int]:
             if n % 250 == 0:
                 print(f"  images: {n}/{len(ids)} ({len(ok)} ok)")
     print(f"[images] {len(ok)}/{len(ids)} downloaded")
+    if _last_errors:
+        print("[images] some downloads failed even after retries, e.g.:\n   " + "\n   ".join(_last_errors[:3]))
     return ok
 
 
 # ----------------------------------------------------------------------------- one-call pipeline
+def _finish_eval_set(eval_set: pd.DataFrame, eval_queries: int, with_images: bool) -> pd.DataFrame:
+    print(f"[eval] {len(eval_set)} candidate outfits found in real baskets")
+    if with_images and len(eval_set):
+        ok = download_images(eval_set["garment_id"].unique())
+        eval_set = eval_set[eval_set["garment_id"].isin(ok)]
+        print(f"[eval] {len(eval_set)} of them have a garment photo")
+    eval_set = eval_set.head(eval_queries).reset_index(drop=True)
+    eval_set.to_parquet(settings.processed_dir / "eval_set.parquet")
+    if eval_set.empty:
+        print("[eval] WARNING: the evaluation set is empty. Most likely Kaggle refused the photo downloads "
+              "(rate limit). Wait a few minutes, then run: from fashion_assistant.data.hm_loader import "
+              "rebuild_eval_set; rebuild_eval_set()")
+    else:
+        print(f"[eval] {len(eval_set)} outfit queries saved")
+    return eval_set
+
+
 def prepare_all(with_images: bool = True, eval_queries: int = 200, seed: int = 7) -> pd.DataFrame:
     """Run the whole data pipeline and save parquet files in data/processed/."""
     from ..eval.build_eval_set import build_eval_set
@@ -220,8 +255,10 @@ def prepare_all(with_images: bool = True, eval_queries: int = 200, seed: int = 7
     settings.ensure_dirs()
     download_tables()
     articles = load_articles()
+    articles.to_parquet(settings.processed_dir / "articles.parquet")
     print(f"[articles] {len(articles):,} products")
     pop, recent_tx = compute_popularity()
+    recent_tx.to_parquet(settings.processed_dir / "recent_transactions.parquet")
     # Over-select a little because some photos are missing, then trim.
     catalog = build_catalog(articles, pop, size=int(settings.catalog_size * 1.1))
     if with_images:
@@ -232,11 +269,24 @@ def prepare_all(with_images: bool = True, eval_queries: int = 200, seed: int = 7
     print(f"[catalog] {len(catalog):,} accessories saved")
 
     eval_set = build_eval_set(articles, catalog, recent_tx, n_queries=eval_queries, seed=seed)
-    if with_images and len(eval_set):
-        ok = download_images(eval_set["garment_id"].unique())
-        eval_set = eval_set[eval_set["garment_id"].isin(ok)]
-    eval_set = eval_set.head(eval_queries).reset_index(drop=True)
-    eval_set.to_parquet(settings.processed_dir / "eval_set.parquet")
-    articles.to_parquet(settings.processed_dir / "articles.parquet")
-    print(f"[eval] {len(eval_set)} outfit queries saved")
+    _finish_eval_set(eval_set, eval_queries, with_images)
     return catalog
+
+
+def rebuild_eval_set(eval_queries: int = 200, seed: int = 7, with_images: bool = True) -> pd.DataFrame:
+    """Rebuild only the evaluation set (no re-download of the big files, photos already
+    on disk are skipped). Use it if the eval set came out empty or too small."""
+    from ..eval.build_eval_set import build_eval_set
+
+    articles = pd.read_parquet(settings.processed_dir / "articles.parquet")
+    catalog = pd.read_parquet(settings.processed_dir / "catalog.parquet")
+    cached = settings.processed_dir / "recent_transactions.parquet"
+    if cached.exists():
+        recent_tx = pd.read_parquet(cached)
+    else:
+        print("[eval] re-reading recent transactions (a few minutes) ...")
+        _, recent_tx = compute_popularity()
+        recent_tx.to_parquet(cached)
+    print(f"[eval] {len(recent_tx):,} transactions in the last {settings.eval_window_weeks} weeks")
+    eval_set = build_eval_set(articles, catalog, recent_tx, n_queries=eval_queries, seed=seed)
+    return _finish_eval_set(eval_set, eval_queries, with_images)

@@ -81,6 +81,47 @@ def test_offline_eval_and_report(fake_hm, monkeypatch):
     assert "Influencer ranker" in md and "Agent wins" in md
 
 
+def test_rebuild_eval_set_without_images(fake_hm, monkeypatch):
+    from fashion_assistant.data import hm_loader
+
+    try:
+        import pyarrow  # noqa: F401
+    except ImportError:
+        monkeypatch.setattr(pd.DataFrame, "to_parquet", lambda self, p, **k: self.to_pickle(p))
+        monkeypatch.setattr(pd, "read_parquet", lambda p, **k: pd.read_pickle(p))
+    arts = hm_loader.load_articles()
+    arts.to_parquet(settings.processed_dir / "articles.parquet")
+    pop, recent = hm_loader.compute_popularity(chunksize=1000)
+    hm_loader.build_catalog(arts, pop).to_parquet(settings.processed_dir / "catalog.parquet")
+    ev = hm_loader.rebuild_eval_set(eval_queries=5, with_images=False)   # no cache -> re-reads transactions
+    assert 0 < len(ev) <= 5
+    assert (settings.processed_dir / "recent_transactions.parquet").exists()
+    assert len(hm_loader.rebuild_eval_set(eval_queries=5, with_images=False)) == len(ev)   # cached path
+
+
+def test_download_retries_then_gives_up(monkeypatch, fake_hm):
+    from fashion_assistant.data import hm_loader
+
+    calls = []
+
+    class FlakyApi:
+        def competition_download_file(self, comp, name, path, quiet=True):
+            calls.append(name)
+            raise RuntimeError("429 Too Many Requests")
+
+    monkeypatch.setattr(hm_loader.time, "sleep", lambda s: None)
+    assert hm_loader._download_one(FlakyApi(), 123, attempts=3) is False
+    assert len(calls) == 3                      # retried, not dropped on the first refusal
+    calls.clear()
+
+    class MissingApi:
+        def competition_download_file(self, *a, **k):
+            calls.append(1)
+            raise RuntimeError("404 Not Found")
+
+    assert hm_loader._download_one(MissingApi(), 124) is False and len(calls) == 1   # no retry for missing photos
+
+
 def test_style_kb_with_fake_embeddings():
     pytest.importorskip("langchain_core")
     from langchain_core.embeddings import DeterministicFakeEmbedding

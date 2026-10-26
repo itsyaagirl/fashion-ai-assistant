@@ -38,7 +38,7 @@ A multimodal **LangGraph** agent (Gemini vision + tool calling) searches a **RAG
 - **Explainable ranking**: the "Influencer Suggestion" is a transparent weighted score, so every pick comes with its evidence ("selling 2.3× its usual rate, gold warms up beige").
 - **Side-by-side evaluation** against keyword search (BM25): offline metrics on real bought-together baskets + a blind LLM judge. See [docs/RESULTS.md](docs/RESULTS.md).
 - **Web app on Vercel** ("Finishing Touch"): upload a photo, watch the agent work live (streamed graph steps), see the Influencer Suggestion with hang-tag scores, persona picks and the agent's tool trace. FastAPI backend runs in Colab behind a free Cloudflare tunnel.
-- **19 tests** including a full graph run and the web API with a scripted fake LLM (no API key needed).
+- **21 tests** including a full graph run and the web API with a scripted fake LLM (no API key needed).
 
 ## Quick start (Colab, ~25 min end to end)
 
@@ -94,7 +94,7 @@ fashion-ai-assistant/
 ├── frontend/                     # Vercel web app (HTML/CSS/JS, no build step)
 ├── serve.py                      # run the web API outside Colab
 ├── app.py                        # simple Gradio demo
-├── tests/                        # 19 tests, run offline
+├── tests/                        # 21 tests, run offline
 └── docs/
     ├── ARCHITECTURE.md           # diagrams, LangGraph logic, design decisions
     ├── HOW_WE_BUILT_IT.md        # step-by-step build story in plain language

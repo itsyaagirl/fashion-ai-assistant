@@ -52,6 +52,9 @@ def influencer_rerank(hits: pd.DataFrame, garment_colour: str) -> pd.DataFrame:
 def run_offline_eval(index: CatalogIndex, eval_set: pd.DataFrame, k: int = 10) -> tuple[pd.DataFrame, dict]:
     from ..data.hm_loader import local_image_path
 
+    if eval_set is None or eval_set.empty:
+        raise ValueError("The evaluation set is empty. Run: from fashion_assistant.data.hm_loader import "
+                         "rebuild_eval_set; ev = rebuild_eval_set()")
     cat = index.catalog
     meta = cat.set_index("article_id")
     meta_tf = trend_fit(cat).set_axis(cat["article_id"])

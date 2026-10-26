@@ -134,7 +134,7 @@ The front end is plain HTML/CSS/JS hosted on **Vercel**. Vercel can't run the mo
 
 ### Step 8: Tests (`tests/`)
 
-19 tests run in about 2 seconds with **no API key or downloads**:
+21 tests run in about 2 seconds with **no API key or downloads**:
 - a fake CLIP that turns text into repeatable random vectors;
 - a synthetic dataset shaped exactly like H&M's files (to test the popularity maths, catalog and eval set);
 - a **scripted fake Gemini** that returns a fixed analysis, makes three tool calls, then says DONE. It runs the *real* LangGraph graph end to end and checks routing, the ToolNode, candidate pooling, ranking, personas and the not-an-outfit exit.

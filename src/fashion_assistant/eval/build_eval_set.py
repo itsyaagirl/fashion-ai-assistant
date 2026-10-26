@@ -32,6 +32,8 @@ def build_eval_set(articles: pd.DataFrame, catalog: pd.DataFrame, recent_tx: pd.
                    .groupby(key)["article_id"].agg(lambda s: sorted(set(s))).rename("accessories"))
     # inner join = baskets that contain at least one garment AND one catalog accessory
     baskets = pd.concat([garments, accessories], axis=1, join="inner")
+    print(f"[eval] {len(garments):,} baskets with a garment, {len(accessories):,} with a catalog accessory, "
+          f"{len(baskets):,} with both")
 
     rng = np.random.default_rng(seed)
     rows, used_garments = [], set()
