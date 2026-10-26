@@ -77,7 +77,9 @@ Result JSON (shortened):
 - **Name:** *Finishing Touch*, since accessories are the finishing touch of an outfit.
 - **Palette:** studio-backdrop lilac-grey `#E9E7EE`, aubergine ink `#24152B`, hang-tag pink `#F4B6CF`, brass `#A87B2D` for the metal grommets and score bars. There's a matching dark mode.
 - **Type:** Bodoni Moda (the high-contrast fashion-magazine face) for headlines and scores, Hanken Grotesk for the interface.
-- **Signature element:** every recommended product wears a pink paper hang tag with its Influencer score, like a price tag in a store. The tags swing in once when results appear, and stay still if the user prefers reduced motion.
+- **Signature element:** every recommended product wears a pink paper hang tag with its Influencer score, like a price tag in a store.
+- **Motion:** screens crossfade into each other (View Transitions API, with a CSS fallback). Agent steps glide in as they stream, and the waiting step shimmers. Results arrive in one cascade: the hero pick rises in, its score counts up, the score bars fill, then the alternatives and persona picks follow 70 ms apart while the tags swing into place. Photos fade in once loaded over a shimmer placeholder. On hover, photos zoom slightly and tags sway. Product rows can be dragged with the mouse and fade at the edge until you reach the end. With reduced motion on, everything appears instantly.
+- **Fluid layout:** the type scale and spacing use `clamp()`, so the page scales continuously from phone to wide desktop instead of jumping at breakpoints.
 - **Build:** plain HTML/CSS/JS with no build step, so Vercel serves `frontend/` as-is. It's responsive down to phone width, keyboard-accessible, and escapes all model text before rendering.
 
 ## Files

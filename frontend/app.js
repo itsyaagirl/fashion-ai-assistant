@@ -28,6 +28,44 @@
     gold: "#c9a227", silver: "#c0c3c8", rust: "#a34c25", mint: "#a8dcc1", nude: "#e0bfa6", taupe: "#8b7d70",
   };
 
+  const calm = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  // Swap screens with a crossfade: View Transitions where the browser has them, a CSS rise otherwise.
+  function swap(update, enterEl) {
+    const done = () => { if (enterEl) { enterEl.classList.remove("enter"); void enterEl.offsetWidth; enterEl.classList.add("enter"); } };
+    if (document.startViewTransition && !calm()) document.startViewTransition(() => { update(); }).finished.catch(() => {});
+    else { update(); done(); }
+  }
+
+  function countUp(el, target, ms = 900) {
+    if (calm() || typeof target !== "number") { el.textContent = fmt(target); return; }
+    const t0 = performance.now();
+    const tick = (t) => {
+      const k = Math.min(1, (t - t0) / ms), eased = 1 - Math.pow(1 - k, 3);
+      el.textContent = fmt(target * eased);
+      if (k < 1) requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }
+
+  // Rows scroll with mouse drag on desktop and lose their fade once you reach the end.
+  function fluidRail(rail) {
+    if (rail.dataset.fluid) return;
+    rail.dataset.fluid = "1";
+    const edge = () => rail.classList.toggle("at-end", rail.scrollLeft + rail.clientWidth >= rail.scrollWidth - 4);
+    rail.addEventListener("scroll", edge, { passive: true });
+    let x0 = 0, s0 = 0, down = false, moved = false;
+    rail.addEventListener("pointerdown", (e) => { if (e.pointerType !== "mouse") return; down = true; moved = false; x0 = e.clientX; s0 = rail.scrollLeft; });
+    window.addEventListener("pointermove", (e) => {
+      if (!down) return;
+      if (Math.abs(e.clientX - x0) > 4) { moved = true; rail.classList.add("dragging"); }
+      if (moved) rail.scrollLeft = s0 - (e.clientX - x0);
+    });
+    window.addEventListener("pointerup", () => { down = false; rail.classList.remove("dragging"); });
+    new ResizeObserver(edge).observe(rail);
+    edge();
+  }
+
   let api = "";
   let personas = FALLBACK_PERSONAS;
   let file = null;
@@ -100,6 +138,7 @@
         tag: null,
       })).join("");
       $("trending").hidden = items.length === 0;
+      fluidRail($("trendRail"));
     } catch (_) { /* server offline: leave hidden */ }
   }
 
@@ -126,8 +165,10 @@
     if (!api || !(await checkServer())) { openConnect("The model server isn't reachable. Start it from Colab, then connect."); return; }
 
     busy = true; updateGo();
-    $("askForm").hidden = true; $("results").hidden = true; $("outfitRead").hidden = true;
-    resetSteps(); $("progress").hidden = false;
+    swap(() => {
+      $("askForm").hidden = true; $("results").hidden = true; $("outfitRead").hidden = true;
+      resetSteps(); $("progress").hidden = false;
+    }, $("progress"));
 
     const fd = new FormData();
     fd.append("image", file);
@@ -141,7 +182,7 @@
       });
       showResult(result);
     } catch (err) {
-      $("progress").hidden = true; $("askForm").hidden = false;
+      swap(() => { $("progress").hidden = true; $("askForm").hidden = false; }, $("askForm"));
       formMsg(err.message || "Something went wrong. Try again.", true);
     } finally {
       busy = false; updateGo();
@@ -223,6 +264,10 @@
   }
 
   function showResult(res) {
+    swap(() => renderResult(res));
+  }
+
+  function renderResult(res) {
     $("progress").hidden = true;
     if (res.outfit) showOutfit(res.outfit);
     const ranked = res.ranked || [];
@@ -233,8 +278,8 @@
     }
     const [top, ...rest] = ranked;
     $("heroPick").innerHTML = `
-      ${productHTML(top, { titleless: true, big: true })}
-      <div>
+      ${productHTML(top, { titleless: true, big: true, i: 0 })}
+      <div data-stagger style="--i:1">
         <p class="kicker">The Influencer Suggestion</p>
         <h2>${esc(top.prod_name)}</h2>
         <p class="meta">${esc(top.colour_group_name)} ${esc(top.product_type_name).toLowerCase()}</p>
@@ -243,14 +288,14 @@
         </div>
         <p class="evidence">Score ${fmt(top.influencer_score)}: how well it suits the outfit, how fast it's selling and how the colours work together.</p>
       </div>`;
-    $("alsoRail").innerHTML = rest.map((it) => productHTML(it)).join("");
+    $("alsoRail").innerHTML = rest.map((it, n) => productHTML(it, { i: 3 + n })).join("");
 
     const pp = Object.entries(res.persona_picks || {});
-    $("personaPicks").innerHTML = pp.length ? pp.map(([, p]) => `
-      <div class="persona-card">
+    $("personaPicks").innerHTML = pp.length ? pp.map(([, p], n) => `
+      <div class="persona-card" data-stagger style="--i:${6 + n}">
         <h3 class="who">${esc(p.name)}</h3>
         <p class="voice">${esc(shortVoice(p.voice))}</p>
-        ${p.picks[0] ? productHTML(p.picks[0]) : "<p>No pick.</p>"}
+        ${p.picks[0] ? productHTML(p.picks[0], { i: 6 + n }) : "<p>No pick.</p>"}
       </div>`).join("") : `<p class="trending-note">No influencers selected. Pick some before styling to see their choices.</p>`;
     $("personaPicks").previousElementSibling.hidden = false;
 
@@ -263,7 +308,15 @@
     const results = $("results");
     results.hidden = false;
     results.classList.remove("reveal"); void results.offsetWidth; results.classList.add("reveal");
-    results.scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
+    // after the entrance, drop the class so hover sway can take over the tags
+    clearTimeout(results._t); results._t = setTimeout(() => results.classList.remove("reveal"), 2200);
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      results.querySelectorAll(".bar .fill").forEach((f) => { f.style.width = f.dataset.w; });
+    }));
+    const heroScore = results.querySelector(".hero-pick .tag-score");
+    if (heroScore) countUp(heroScore, top.influencer_score);
+    fluidRail($("alsoRail"));
+    results.scrollIntoView({ behavior: calm() ? "auto" : "smooth", block: "start" });
   }
 
   function productHTML(it, opts = {}) {
@@ -271,16 +324,18 @@
       <div class="tag" aria-hidden="true"><span class="tag-hole"></span><span class="tag-score">${fmt(it.influencer_score)}</span><span class="tag-label">match</span></div>`;
     const sub = opts.sub || `${esc(it.colour_group_name)} ${esc(it.product_type_name).toLowerCase()}`;
     return `
-      <figure class="product" style="margin:0">
+      <figure class="product" style="margin:0;--i:${opts.i ?? 0}" ${opts.i != null ? "data-stagger" : ""}>
         <div class="photo">
-          <img src="${url(it.image_url)}" alt="${esc(it.prod_name)}" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'noimg',textContent:'Photo unavailable'}))">
+          <span class="frame"><img src="${url(it.image_url)}" alt="${esc(it.prod_name)}" loading="lazy" draggable="false"
+            onload="this.classList.add('loaded')"
+            onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'noimg',textContent:'Photo unavailable'}))"></span>
           ${tag}
         </div>
         ${opts.titleless ? "" : `<figcaption><h3>${esc(it.prod_name)}</h3><p>${sub}</p></figcaption>`}
       </figure>`;
   }
 
-  const bar = (name, v) => `<div class="bar"><span>${name}</span><span class="track"><span class="fill" style="width:${Math.round((v || 0) * 100)}%"></span></span><output>${fmt(v)}</output></div>`;
+  const bar = (name, v) => `<div class="bar"><span>${name}</span><span class="track"><span class="fill" data-w="${Math.round((v || 0) * 100)}%"></span></span><output>${fmt(v)}</output></div>`;
   const fmt = (v) => (typeof v === "number" ? v.toFixed(2).replace(/^0/, "") : "–");
   const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
   function describeArgs(a) {
@@ -349,8 +404,8 @@
     $("changePhoto").addEventListener("click", () => $("fileInput").click());
     $("askForm").addEventListener("submit", run);
     $("againBtn").addEventListener("click", () => {
-      $("results").hidden = true; $("outfitRead").hidden = true; $("askForm").hidden = false;
-      window.scrollTo({ top: 0 });
+      window.scrollTo({ top: 0, behavior: calm() ? "auto" : "smooth" });
+      swap(() => { $("results").hidden = true; $("outfitRead").hidden = true; $("askForm").hidden = false; }, $("askForm"));
     });
     $("serverPill").addEventListener("click", () => openConnect());
     $("connectBtn").addEventListener("click", connect);
