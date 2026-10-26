@@ -1,0 +1,19 @@
+# Data is downloaded, never committed (H&M license is non-commercial and files are large)
+data/raw/
+data/processed/
+data/images/
+data/index/
+data/tiktok/*
+!data/tiktok/EXAMPLE_format.csv
+
+# Secrets
+.env
+kaggle.json
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.ipynb_checkpoints/
+*.egg-info/
+.venv/
